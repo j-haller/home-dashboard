@@ -22,7 +22,8 @@ public record WeatherData(
         double temperature,
         double apparentTemperature,
         int precipitationProbability,
-        int weatherCode
+        int weatherCode,
+        int isDay
     ) {}
 
     public record DailyEntry(

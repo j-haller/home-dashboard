@@ -52,6 +52,7 @@ export interface WeatherHourly {
   apparentTemperature: number;
   precipitationProbability: number;
   weatherCode: number;
+  isDay: number;
 }
 
 export interface WeatherDaily {

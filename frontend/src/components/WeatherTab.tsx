@@ -1,11 +1,11 @@
-import { CloudDrizzle, CloudFog2, CloudLightningRain, CloudRain, CloudRainHeavy, CloudSnow, CloudSun, Moon, Sun, Thermometer } from 'react-bootstrap-icons'
+import { CloudDrizzle, CloudFog2, CloudMoon, CloudLightningRain, CloudRain, CloudRainHeavy, CloudSnow, CloudSun, Moon, Sun, Thermometer } from 'react-bootstrap-icons'
 import type { WeatherData } from '../types'
 
 type IconComponent = React.ComponentType<{ size?: number | string }>
 
 function weatherInfo(code: number, isDay = 1): { label: string; Icon: IconComponent } {
   if (code === 0) return { label: 'Clear sky', Icon: isDay ? Sun : Moon }
-  if (code <= 3) return { label: 'Partly cloudy', Icon: CloudSun }
+  if (code <= 3) return { label: 'Partly cloudy', Icon: isDay ? CloudSun : CloudMoon }
   if (code <= 48) return { label: 'Foggy', Icon: CloudFog2 }
   if (code <= 55) return { label: 'Drizzle', Icon: CloudDrizzle }
   if (code <= 67) return { label: 'Rain', Icon: CloudRain }
@@ -18,11 +18,10 @@ function weatherInfo(code: number, isDay = 1): { label: string; Icon: IconCompon
 export default function WeatherTab({ data }: { data: WeatherData | null }) {
   if (!data) return <p className="text-muted">Loading...</p>
 
-  const currentHour = new Date().getHours()
-  const futureHourly = data.hourly.filter(h => {
-    const hour = parseInt(h.time.split('T')[1].substring(0, 2))
-    return hour >= currentHour
-  })
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const currentHourKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:00`
+  const futureHourly = data.hourly.filter(h => h.time >= currentHourKey).slice(0, 24)
 
   const { label, Icon } = weatherInfo(data.current.weatherCode, data.current.isDay)
 
@@ -56,7 +55,7 @@ export default function WeatherTab({ data }: { data: WeatherData | null }) {
 
       <div className="d-flex gap-2 overflow-auto" style={{ scrollbarWidth: 'none' }}>
         {futureHourly.map(h => {
-          const { Icon: HIcon } = weatherInfo(h.weatherCode)
+          const { Icon: HIcon } = weatherInfo(h.weatherCode, h.isDay)
           const hour = h.time.split('T')[1].substring(0, 5)
           return (
             <div key={h.time} className="card text-center" style={{ flex: '1 0 4rem' }}>

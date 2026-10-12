@@ -7,7 +7,7 @@
 
 ## Target display
 
-1024×576 touchscreen. All UI must be usable at that resolution with touch input — no hover-only interactions, tap targets large enough. Scrolling is disabled both horizontally and vertically; all content must fit within the display without overflow.
+1024×576 touchscreen. All UI must be usable at that resolution with touch input — no hover-only interactions, tap targets large enough. Scrolling is enabled both horizontally and vertically; ideally, all content fits within the display without overflow.
 
 ## Dependencies and packages
 

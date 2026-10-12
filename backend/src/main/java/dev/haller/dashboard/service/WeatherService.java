@@ -55,7 +55,7 @@ public class WeatherService {
             + "?latitude=" + w.getLatitude()
             + "&longitude=" + w.getLongitude()
             + "&current=temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,relative_humidity_2m,is_day"
-            + "&hourly=temperature_2m,apparent_temperature,precipitation_probability,weather_code"
+            + "&hourly=temperature_2m,apparent_temperature,precipitation_probability,weather_code,is_day"
             + "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max"
             + "&timezone=auto&forecast_days=7";
 
@@ -83,24 +83,27 @@ public class WeatherService {
             curr.path("is_day").asInt()
         );
 
-        String today = LocalDate.now().toString();
+        // Today + tomorrow, so the frontend can always show the next 24 hours
+        String dayAfterTomorrow = LocalDate.now().plusDays(2).toString();
         JsonNode hourlyNode = root.path("hourly");
         JsonNode times = hourlyNode.path("time");
         JsonNode temps = hourlyNode.path("temperature_2m");
         JsonNode apparent = hourlyNode.path("apparent_temperature");
         JsonNode precipProb = hourlyNode.path("precipitation_probability");
         JsonNode codes = hourlyNode.path("weather_code");
+        JsonNode isDay = hourlyNode.path("is_day");
 
         List<WeatherData.HourlyEntry> hourly = new ArrayList<>();
         for (int i = 0; i < times.size(); i++) {
             String time = times.get(i).asText();
-            if (time.startsWith(today)) {
+            if (time.compareTo(dayAfterTomorrow) < 0) {
                 hourly.add(new WeatherData.HourlyEntry(
                     time,
                     temps.get(i).asDouble(),
                     apparent.get(i).asDouble(),
                     precipProb.get(i).asInt(),
-                    codes.get(i).asInt()
+                    codes.get(i).asInt(),
+                    isDay.path(i).asInt(1)
                 ));
             }
         }

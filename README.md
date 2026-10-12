@@ -6,7 +6,7 @@ A home dashboard built with Spring Boot and React that displays real-time inform
 
 - **Stationboard** — live Swiss train departures via [transport.opendata.ch](https://transport.opendata.ch)
 - **Philips Hue** — light group status, toggle controls, and brightness slider via the Hue Bridge API v2
-- **Weather** — current conditions plus hourly and daily forecast via [Open-Meteo](https://open-meteo.com)
+- **Weather** — current conditions, hourly forecast for the next 24 hours, and daily forecast via [Open-Meteo](https://open-meteo.com)
 - **Waste collection calendar** — upcoming pickup dates via [openerz.metaodi.ch](https://openerz.metaodi.ch) and [mr-green.ch](https://mr-green.ch)
 - **WiFi QR code** — scan-to-connect QR code for guests
 
