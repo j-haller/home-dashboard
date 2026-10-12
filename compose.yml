@@ -20,6 +20,7 @@ services:
     depends_on:
       - backend-prod
     profiles: ["prod"]
+    restart: unless-stopped
 
   backend:
     build:
@@ -40,6 +41,7 @@ services:
       default:
         aliases:
           - backend
+    restart: unless-stopped
 
   frontend:
     build:
