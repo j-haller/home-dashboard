@@ -36,7 +36,7 @@ Create a `.env` file in the project root:
 ```env
 STATION_NAME=                  # Swiss transport station name (e.g. "Zurich HB")
 HUE_API_KEY=                   # Philips Hue API key
-HUE_BRIDGE_ADDRESS=            # Fallback IP for the Hue Bridge (used if discovery fails)
+HUE_BRIDGE_ADDRESS=            # Fallback IP for the Hue Bridge (used if discovery fails or finds no bridge)
 ZIP=                           # Swiss postal code for waste collection calendar
 WEATHER_LATITUDE=              # Latitude for weather forecast (e.g. 47.37)
 WEATHER_LONGITUDE=             # Longitude for weather forecast (e.g. 8.54)

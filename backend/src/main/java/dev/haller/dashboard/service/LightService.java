@@ -28,8 +28,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public class LightService {
 
     private static final Logger log = LoggerFactory.getLogger(LightService.class);
-    // No data from the bridge for this long: treat the connection as dead and reconnect
-    private static final Duration BRIDGE_IDLE_TIMEOUT = Duration.ofMinutes(10);
+    // Backstop only: dead connections are detected by TCP keepalive (see WebClientConfig).
+    // Long, because a quiet bridge sends nothing and every reconnect costs a resync request.
+    private static final Duration BRIDGE_IDLE_TIMEOUT = Duration.ofHours(1);
 
     private final WebClient webClient;
     private final WebClient hueWebClient;
@@ -54,11 +55,9 @@ public class LightService {
 
     @PostConstruct
     void start() {
+        // Groups are loaded once the event stream is connected (see bridgeEventStream)
         discoverBridge()
-            .doOnSuccess(v -> {
-                fetchGroups().subscribe();
-                subscribeToBridgeEvents();
-            })
+            .doOnSuccess(v -> subscribeToBridgeEvents())
             .subscribe();
 
         Flux.interval(Duration.ofHours(24))
@@ -75,15 +74,64 @@ public class LightService {
                 if (data.isArray() && !data.isEmpty() && data.get(0).has("internalipaddress")) {
                     bridgeAddress = data.get(0).get("internalipaddress").asText();
                     log.info("Bridge discovered: {}", bridgeAddress);
+                } else {
+                    log.warn("Bridge discovery returned no bridge: {}", data);
                 }
             })
             .onErrorResume(e -> {
+                log.warn("Bridge discovery failed: {}", e.getMessage());
+                return Mono.empty();
+            })
+            // Discovery can fail or come back empty: fall back to the configured address
+            .then(Mono.fromRunnable(() -> {
                 if (bridgeAddress == null || bridgeAddress.isEmpty()) {
                     bridgeAddress = props.getLights().getBridgeAddressFallback();
-                    log.warn("Bridge discovery failed, using fallback: {}", bridgeAddress);
-                } else {
-                    log.warn("Bridge discovery failed, keeping {}", bridgeAddress);
+                    if (bridgeAddress == null || bridgeAddress.isEmpty()) {
+                        log.error("No bridge address: discovery found none and no fallback is configured");
+                    } else {
+                        log.warn("Using fallback bridge address: {}", bridgeAddress);
+                    }
                 }
+            }));
+    }
+
+    private Mono<JsonNode> getResource(String type) {
+        return hueWebClient.get()
+            .uri("https://" + bridgeAddress + "/clip/v2/resource/" + type)
+            .header("hue-application-key", props.getLights().getApiKey())
+            .retrieve()
+            .bodyToMono(JsonNode.class)
+            // Otherwise a failed fetch leaves the cache stale until the next reconnect
+            .retryWhen(Retry.backoff(3, Duration.ofSeconds(5))
+                .filter(e -> !(e instanceof WebClientResponseException.Forbidden)));
+    }
+
+    // Rooms rarely change (room events trigger a full fetch), so a resync only needs light state
+    private Mono<Void> resync() {
+        boolean roomsKnown;
+        synchronized (cacheLock) {
+            roomsKnown = !cachedGroups.isEmpty();
+        }
+        return roomsKnown ? fetchGroupStates() : fetchGroups();
+    }
+
+    private Mono<Void> fetchGroupStates() {
+        if (bridgeAddress == null || bridgeAddress.isEmpty()) return Mono.empty();
+
+        return getResource("grouped_light")
+            .doOnNext(groupedLights -> {
+                synchronized (cacheLock) {
+                    boolean changed = false;
+                    for (JsonNode gl : groupedLights.path("data")) {
+                        changed |= applyGroupState(gl);
+                    }
+                    if (changed) {
+                        emitSnapshot();
+                    }
+                }
+            })
+            .onErrorResume(e -> {
+                log.error("fetchGroupStates failed: {}", e.getMessage());
                 return Mono.empty();
             })
             .then();
@@ -91,21 +139,8 @@ public class LightService {
 
     private Mono<Void> fetchGroups() {
         if (bridgeAddress == null || bridgeAddress.isEmpty()) return Mono.empty();
-        String apiKey = props.getLights().getApiKey();
 
-        Mono<JsonNode> roomsMono = hueWebClient.get()
-            .uri("https://" + bridgeAddress + "/clip/v2/resource/room")
-            .header("hue-application-key", apiKey)
-            .retrieve()
-            .bodyToMono(JsonNode.class);
-
-        Mono<JsonNode> groupedLightsMono = hueWebClient.get()
-            .uri("https://" + bridgeAddress + "/clip/v2/resource/grouped_light")
-            .header("hue-application-key", apiKey)
-            .retrieve()
-            .bodyToMono(JsonNode.class);
-
-        return Mono.zip(roomsMono, groupedLightsMono)
+        return Mono.zip(getResource("room"), getResource("grouped_light"))
             .doOnNext(tuple -> {
                 JsonNode rooms = tuple.getT1();
                 JsonNode groupedLights = tuple.getT2();
@@ -176,7 +211,7 @@ public class LightService {
                     return response.<String>createError().flux();
                 }
                 // Stream is open: resync the cache to pick up changes missed while disconnected
-                fetchGroups().subscribe();
+                resync().subscribe();
                 return response.bodyToFlux(String.class);
             })
             // A half-open connection never errors, so a silent stream is reconnected
@@ -190,37 +225,58 @@ public class LightService {
         try {
             JsonNode events = objectMapper.readTree(eventData);
             if (!events.isArray()) return;
+            boolean roomsChanged;
             synchronized (cacheLock) {
-                applyBridgeEvents(events);
+                roomsChanged = applyBridgeEvents(events);
+            }
+            if (roomsChanged) {
+                log.info("Room added, removed or renamed, reloading rooms");
+                fetchGroups().subscribe();
             }
         } catch (Exception e) {
             log.error("Failed to parse bridge event: {}", e.getMessage());
         }
     }
 
-    private void applyBridgeEvents(JsonNode events) {
+    // Caller must hold cacheLock. Returns true if rooms changed and must be reloaded.
+    private boolean applyBridgeEvents(JsonNode events) {
         boolean changed = false;
+        boolean roomsChanged = false;
         for (JsonNode event : events) {
-            if (!"update".equals(event.path("type").asText())) continue;
+            String eventType = event.path("type").asText();
             for (JsonNode resource : event.path("data")) {
-                if (!"grouped_light".equals(resource.path("type").asText())) continue;
-                String id = resource.path("id").asText();
-                ObjectNode cached = cachedGroups.get(id);
-                if (cached == null) continue;
-                ObjectNode action = (ObjectNode) cached.get("action");
-                if (resource.has("on")) {
-                    action.put("on", resource.path("on").path("on").asBoolean());
-                    changed = true;
-                }
-                if (resource.has("dimming")) {
-                    action.put("brightness", resource.path("dimming").path("brightness").asDouble(100.0));
-                    changed = true;
+                String resourceType = resource.path("type").asText();
+                if ("room".equals(resourceType)
+                        && ("add".equals(eventType) || "delete".equals(eventType) || resource.has("metadata"))) {
+                    roomsChanged = true;
+                } else if ("update".equals(eventType) && "grouped_light".equals(resourceType)) {
+                    changed |= applyGroupState(resource);
                 }
             }
         }
         if (changed) {
             emitSnapshot();
         }
+        return roomsChanged;
+    }
+
+    // Caller must hold cacheLock. Applies on/dimming from a (partial) grouped_light resource.
+    private boolean applyGroupState(JsonNode resource) {
+        ObjectNode cached = cachedGroups.get(resource.path("id").asText());
+        if (cached == null) return false;
+        ObjectNode action = (ObjectNode) cached.get("action");
+        boolean changed = false;
+        if (resource.has("on")) {
+            boolean on = resource.path("on").path("on").asBoolean();
+            changed |= action.path("on").asBoolean() != on;
+            action.put("on", on);
+        }
+        if (resource.has("dimming")) {
+            double brightness = resource.path("dimming").path("brightness").asDouble(100.0);
+            changed |= action.path("brightness").asDouble() != brightness;
+            action.put("brightness", brightness);
+        }
+        return changed;
     }
 
     // Caller must hold cacheLock. Deep copy, so later in-place updates don't race with serialization.
