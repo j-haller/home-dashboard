@@ -26,10 +26,12 @@ public class WifiService {
     private static final Logger log = LoggerFactory.getLogger(WifiService.class);
 
     private final AppProperties props;
+    private final SettingsService settingsService;
     private final ObjectMapper objectMapper;
 
-    public WifiService(AppProperties props, ObjectMapper objectMapper) {
+    public WifiService(AppProperties props, SettingsService settingsService, ObjectMapper objectMapper) {
         this.props = props;
+        this.settingsService = settingsService;
         this.objectMapper = objectMapper;
     }
 
@@ -48,6 +50,7 @@ public class WifiService {
     }
 
     public Flux<ServerSentEvent<String>> eventFlux() {
+        if (!settingsService.isEnabled("wifi")) return Flux.empty();
         return Mono.fromCallable(this::buildWifiData)
             .map(data -> {
                 try {

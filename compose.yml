@@ -25,6 +25,8 @@ services:
     build:
       context: ./backend
     env_file: .env
+    volumes:
+      - ./data:/data
     profiles: ["dev"]
     networks:
       default:
@@ -35,6 +37,8 @@ services:
     build:
       context: ./backend
     env_file: .env
+    volumes:
+      - ./data:/data
     profiles: ["prod"]
     networks:
       default:
@@ -52,3 +56,4 @@ services:
       default:
         aliases:
           - frontend
+

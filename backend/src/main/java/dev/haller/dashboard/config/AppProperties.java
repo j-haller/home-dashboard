@@ -28,12 +28,14 @@ public class AppProperties {
 
     public static class Stationboard {
         private String station = "Zurich HB";
-        private int limit = 5;
-        private String apiUrl = "https://transport.opendata.ch/v1/stationboard";
+        private int limit = 10;
+        private int showDelays = 1;
+        private String apiUrl = "https://search.ch/timetable/api/stationboard.json";
 
         public String getStation() { return station; }
         public void setStation(String station) { this.station = station; }
         public int getLimit() { return limit; }
+        public int getShowDelays() { return showDelays; }
         public void setLimit(int limit) { this.limit = limit; }
         public String getApiUrl() { return apiUrl; }
         public void setApiUrl(String apiUrl) { this.apiUrl = apiUrl; }

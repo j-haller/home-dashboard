@@ -27,19 +27,27 @@ public class WeatherService {
 
     private final WebClient webClient;
     private final AppProperties props;
+    private final SettingsService settingsService;
     private final ObjectMapper objectMapper;
     private final Sinks.Many<WeatherData> dataSink = Sinks.many().replay().latest();
 
-    public WeatherService(WebClient webClient, AppProperties props, ObjectMapper objectMapper) {
+    public WeatherService(WebClient webClient, AppProperties props, SettingsService settingsService, ObjectMapper objectMapper) {
         this.webClient = webClient;
         this.props = props;
+        this.settingsService = settingsService;
         this.objectMapper = objectMapper;
     }
 
     @PostConstruct
     void startPolling() {
-        Flux.interval(Duration.ZERO, Duration.ofMinutes(15))
-            .flatMap(tick -> fetchData())
+        Flux.merge(
+                Flux.interval(Duration.ZERO, Duration.ofMinutes(15)).cast(Object.class),
+                settingsService.changes()
+                    .filter(k -> k.startsWith("weather.") || "latitude".equals(k) || "longitude".equals(k))
+                    .cast(Object.class)
+            )
+            .filter(ignored -> settingsService.isEnabled("weather"))
+            .flatMap(ignored -> fetchData())
             .subscribe(
                 data -> {
                     log.info("Weather data updated: {}°C, code={}", data.current().temperature(), data.current().weatherCode());
@@ -52,8 +60,8 @@ public class WeatherService {
     private Mono<WeatherData> fetchData() {
         AppProperties.Weather w = props.getWeather();
         String url = w.getApiUrl()
-            + "?latitude=" + w.getLatitude()
-            + "&longitude=" + w.getLongitude()
+            + "?latitude=" + settingsService.getLatitude()
+            + "&longitude=" + settingsService.getLongitude()
             + "&current=temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,relative_humidity_2m,is_day"
             + "&hourly=temperature_2m,apparent_temperature,precipitation_probability,weather_code"
             + "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max"
@@ -129,18 +137,17 @@ public class WeatherService {
     }
 
     public Flux<ServerSentEvent<String>> eventFlux() {
-        return Flux.concat(
-            dataSink.asFlux().next(),
-            Flux.interval(Duration.ofMinutes(15)).flatMap(tick -> dataSink.asFlux().next())
-        ).map(data -> {
-            try {
-                return ServerSentEvent.<String>builder()
-                    .event("weather")
-                    .data(objectMapper.writeValueAsString(data))
-                    .build();
-            } catch (JsonProcessingException e) {
-                throw new RuntimeException(e);
-            }
-        });
+        return dataSink.asFlux()
+            .filter(data -> settingsService.isEnabled("weather"))
+            .map(data -> {
+                try {
+                    return ServerSentEvent.<String>builder()
+                        .event("weather")
+                        .data(objectMapper.writeValueAsString(data))
+                        .build();
+                } catch (JsonProcessingException e) {
+                    throw new RuntimeException(e);
+                }
+            });
     }
 }

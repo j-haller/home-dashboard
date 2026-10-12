@@ -37,13 +37,17 @@ public class LightService {
     private final Map<String, ObjectNode> cachedGroups = new ConcurrentHashMap<>();
     private final Sinks.Many<Map<String, ObjectNode>> groupsSink = Sinks.many().replay().latest();
 
+    private final SettingsService settingsService;
+
     public LightService(WebClient webClient,
                         @Qualifier("hueWebClient") WebClient hueWebClient,
                         AppProperties props,
+                        SettingsService settingsService,
                         ObjectMapper objectMapper) {
         this.webClient = webClient;
         this.hueWebClient = hueWebClient;
         this.props = props;
+        this.settingsService = settingsService;
         this.objectMapper = objectMapper;
     }
 
@@ -207,6 +211,7 @@ public class LightService {
     }
 
     public Flux<ServerSentEvent<String>> eventFlux() {
+        if (!settingsService.isEnabled("lights")) return Flux.empty();
         Flux<ServerSentEvent<String>> groupsFlux = Flux.concat(
             groupsSink.asFlux().next(),
             Flux.interval(Duration.ofHours(1)).flatMap(tick -> groupsSink.asFlux().next())

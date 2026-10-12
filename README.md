@@ -9,6 +9,7 @@ A home dashboard built with Spring Boot and React that displays real-time inform
 - **Weather** — current conditions plus hourly and daily forecast via [Open-Meteo](https://open-meteo.com)
 - **Waste collection calendar** — upcoming pickup dates via [openerz.metaodi.ch](https://openerz.metaodi.ch) and [mr-green.ch](https://mr-green.ch)
 - **WiFi QR code** — scan-to-connect QR code for guests
+- **Settings** — in-app UI to change station, ZIP, and weather coordinates; persisted in SQLite across restarts
 
 ## Architecture
 
@@ -18,14 +19,15 @@ The backend pushes real-time data to the browser via a single SSE endpoint with 
 backend/                        # Spring Boot (Java 21, WebFlux, Maven)
   src/main/java/dev/haller/dashboard/
     config/                     # AppProperties, WebClientConfig
-    controller/                 # SseController, LightController
-    service/                    # CalendarService, LightService, StationboardService, WifiService
+    controller/                 # SseController, LightController, SettingsController
+    repository/                 # SettingsRepository (SQLite via JdbcClient)
+    service/                    # CalendarService, LightService, StationboardService, WifiService, SettingsService
     model/                      # CalendarData, WifiData, TriggerLightRequest
 
 frontend/                       # React 18 + Vite + TypeScript + Bootstrap
   src/
     hooks/useSse.ts             # EventSource hook for named SSE events
-    components/                 # StationboardTab, LightsTab, WeatherTab, CalendarTab, WifiTab
+    components/                 # StationboardTab, LightsTab, WeatherTab, CalendarTab, WifiTab, SettingsTab
     types/                      # Shared TypeScript interfaces
 ```
 
@@ -51,6 +53,8 @@ WIFI_PASSWORD=                 # WiFi password for QR code
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/trigger-light` | Toggle or dim a light group. Body: `{ "id": "<group-id>", "on": true\|false, "brightness": 0–100 }` |
+| `GET` | `/api/settings` | Returns current user settings (DB value or env var fallback) |
+| `PATCH` | `/api/settings` | Update one or more settings. Body: `{ "station": "…", "zip": "…", "latitude": "…", "longitude": "…" }` |
 
 ### SSE
 
@@ -82,3 +86,7 @@ docker compose --profile prod up --build
 ```
 
 Builds the React app and serves it as static files via nginx alongside the Spring Boot backend. Exposed on port `8080`.
+
+### Persistence
+
+User settings are stored in a SQLite database at `/data/settings.db` inside the backend container. The `settings-data` named Docker volume keeps this file across container restarts and rebuilds. Settings changed via the UI take effect on the next poll cycle for each service.

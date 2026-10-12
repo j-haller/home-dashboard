@@ -25,8 +25,7 @@ export interface LightGroup {
 export type LightGroups = Record<string, LightGroup>;
 
 export interface CalendarData {
-  cardboard: string[];
-  paper: string[];
+  wasteTypes: Record<string, string[]>;
   mrgreen: string[];
 }
 
@@ -67,4 +66,24 @@ export interface WeatherData {
   current: WeatherCurrent;
   hourly: WeatherHourly[];
   daily: WeatherDaily[];
+}
+
+export interface SettingsData {
+  station: string;
+  zip: string;
+  latitude: string;
+  longitude: string;
+  weatherLocation: string;
+  calendarRegion: string;
+  calendarArea: string;
+  calendarTypes: string[];
+  calendarLimit: string;
+  calendarMrgreenEnabled: boolean;
+  calendarMrgreenZip: string;
+  calendarMrgreenType: string;
+  stationboardEnabled: boolean;
+  weatherEnabled: boolean;
+  calendarEnabled: boolean;
+  wifiEnabled: boolean;
+  lightsEnabled: boolean;
 }

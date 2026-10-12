@@ -22,19 +22,27 @@ public class StationboardService {
 
     private final WebClient webClient;
     private final AppProperties props;
+    private final SettingsService settingsService;
     private final ObjectMapper objectMapper;
     private volatile JsonNode cachedData;
 
-    public StationboardService(WebClient webClient, AppProperties props, ObjectMapper objectMapper) {
+    public StationboardService(WebClient webClient, AppProperties props, SettingsService settingsService, ObjectMapper objectMapper) {
         this.webClient = webClient;
         this.props = props;
+        this.settingsService = settingsService;
         this.objectMapper = objectMapper;
     }
 
     @PostConstruct
     void startPolling() {
-        Flux.interval(Duration.ZERO, Duration.ofSeconds(30))
-            .flatMap(tick -> fetchData())
+        Flux.merge(
+                Flux.interval(Duration.ZERO, Duration.ofSeconds(30)).cast(Object.class),
+                settingsService.changes()
+                    .filter(k -> "station".equals(k) || "stationboard.enabled".equals(k))
+                    .cast(Object.class)
+            )
+            .filter(ignored -> settingsService.isEnabled("stationboard"))
+            .flatMap(ignored -> fetchData())
             .subscribe(
                 data -> this.cachedData = data,
                 err -> log.error("Stationboard polling error", err)
@@ -43,7 +51,7 @@ public class StationboardService {
 
     private Mono<JsonNode> fetchData() {
         AppProperties.Stationboard sb = props.getStationboard();
-        String url = sb.getApiUrl() + "?station=" + sb.getStation() + "&limit=" + sb.getLimit();
+        String url = sb.getApiUrl() + "?stop=" + settingsService.getStation() + "&limit=" + sb.getLimit() + "&show_delays=" + sb.getShowDelays();
         return webClient.get()
             .uri(url)
             .retrieve()
@@ -56,7 +64,7 @@ public class StationboardService {
 
     public Flux<ServerSentEvent<String>> eventFlux() {
         return Flux.interval(Duration.ZERO, Duration.ofSeconds(10))
-            .filter(tick -> cachedData != null)
+            .filter(tick -> cachedData != null && settingsService.isEnabled("stationboard"))
             .map(tick -> {
                 try {
                     return ServerSentEvent.<String>builder()

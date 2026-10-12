@@ -9,26 +9,42 @@ function formatDate(dateStr: string): string {
   return `${day}.${month}.`
 }
 
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
 export default function CalendarTab({ data }: Props) {
   if (!data) return <p className="text-muted">Loading...</p>
 
-  const rows = Array.from({ length: 3 }, (_, i) => i)
+  const wasteEntries = Object.entries(data.wasteTypes)
+  const hasMrgreen = data.mrgreen.length > 0
+
+  if (wasteEntries.length === 0 && !hasMrgreen) {
+    return <p className="text-muted">No collection data available.</p>
+  }
+
+  const rowCount = Math.max(
+    ...wasteEntries.map(([, dates]) => dates.length),
+    hasMrgreen ? data.mrgreen.length : 0
+  )
 
   return (
     <table className="table">
       <thead>
         <tr>
-          <th>Cardboard</th>
-          <th>Paper</th>
-          <th>Mr. Green</th>
+          {wasteEntries.map(([type]) => (
+            <th key={type}>{capitalize(type)}</th>
+          ))}
+          {hasMrgreen && <th>Mr. Green</th>}
         </tr>
       </thead>
       <tbody>
-        {rows.map(i => (
+        {Array.from({ length: rowCount }, (_, i) => (
           <tr key={i}>
-            <td>{data.cardboard[i] ? formatDate(data.cardboard[i]) : '—'}</td>
-            <td>{data.paper[i] ? formatDate(data.paper[i]) : '—'}</td>
-            <td>{data.mrgreen[i] ? formatDate(data.mrgreen[i]) : '—'}</td>
+            {wasteEntries.map(([type, dates]) => (
+              <td key={type}>{dates[i] ? formatDate(dates[i]) : '—'}</td>
+            ))}
+            {hasMrgreen && <td>{data.mrgreen[i] ? formatDate(data.mrgreen[i]) : '—'}</td>}
           </tr>
         ))}
       </tbody>
