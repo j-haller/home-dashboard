@@ -13,6 +13,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
@@ -27,6 +28,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class LightService {
 
     private static final Logger log = LoggerFactory.getLogger(LightService.class);
+    // No data from the bridge for this long: treat the connection as dead and reconnect
+    private static final Duration BRIDGE_IDLE_TIMEOUT = Duration.ofMinutes(10);
 
     private final WebClient webClient;
     private final WebClient hueWebClient;
@@ -36,6 +39,8 @@ public class LightService {
     // grouped_light UUID → {name, action:{on}}
     private final Map<String, ObjectNode> cachedGroups = new ConcurrentHashMap<>();
     private final Sinks.Many<Map<String, ObjectNode>> groupsSink = Sinks.many().replay().latest();
+    // Guards cachedGroups and groupsSink: fetchGroups and bridge events run on different threads
+    private final Object cacheLock = new Object();
 
     public LightService(WebClient webClient,
                         @Qualifier("hueWebClient") WebClient hueWebClient,
@@ -73,8 +78,12 @@ public class LightService {
                 }
             })
             .onErrorResume(e -> {
-                bridgeAddress = props.getLights().getBridgeAddressFallback();
-                log.warn("Bridge discovery failed, using fallback: {}", bridgeAddress);
+                if (bridgeAddress == null || bridgeAddress.isEmpty()) {
+                    bridgeAddress = props.getLights().getBridgeAddressFallback();
+                    log.warn("Bridge discovery failed, using fallback: {}", bridgeAddress);
+                } else {
+                    log.warn("Bridge discovery failed, keeping {}", bridgeAddress);
+                }
                 return Mono.empty();
             })
             .then();
@@ -122,9 +131,11 @@ public class LightService {
                     }
                 }
 
-                cachedGroups.clear();
-                cachedGroups.putAll(merged);
-                groupsSink.tryEmitNext(new HashMap<>(cachedGroups));
+                synchronized (cacheLock) {
+                    cachedGroups.clear();
+                    cachedGroups.putAll(merged);
+                    emitSnapshot();
+                }
                 log.info("Loaded {} rooms", merged.size());
             })
             .onErrorResume(e -> {
@@ -136,22 +147,42 @@ public class LightService {
 
     private void subscribeToBridgeEvents() {
         if (bridgeAddress == null || bridgeAddress.isEmpty()) return;
-        String url = "https://" + bridgeAddress + "/eventstream/clip/v2";
-        String apiKey = props.getLights().getApiKey();
 
-        hueWebClient.get()
-            .uri(url)
-            .header("hue-application-key", apiKey)
-            .accept(MediaType.TEXT_EVENT_STREAM)
-            .retrieve()
-            .bodyToFlux(String.class)
+        // defer: every (re)connect builds the URL from the current bridgeAddress
+        Flux.defer(this::bridgeEventStream)
             .retryWhen(Retry.backoff(Long.MAX_VALUE, Duration.ofSeconds(5))
                 .maxBackoff(Duration.ofSeconds(60))
-                .filter(e -> !(e instanceof org.springframework.web.reactive.function.client.WebClientResponseException.Forbidden))
-                .doBeforeRetry(sig -> log.warn("Bridge SSE reconnecting: {}", sig.failure().getMessage())))
-            .subscribe(this::processBridgeEvent);
+                .transientErrors(true)
+                .filter(e -> !(e instanceof WebClientResponseException.Forbidden))
+                .doBeforeRetry(sig -> log.warn("Bridge SSE reconnecting: {}", sig.failure().toString())))
+            .subscribe(this::processBridgeEvent,
+                e -> log.error("Bridge SSE stopped permanently: {}", e.getMessage()));
+    }
 
-        log.info("Subscribed to bridge SSE event stream at {}", url);
+    private Flux<String> bridgeEventStream() {
+        String address = bridgeAddress;
+        if (address == null || address.isEmpty()) {
+            return Flux.error(new IllegalStateException("Bridge address unknown"));
+        }
+        String url = "https://" + address + "/eventstream/clip/v2";
+        log.info("Connecting to bridge SSE event stream at {}", url);
+
+        return hueWebClient.get()
+            .uri(url)
+            .header("hue-application-key", props.getLights().getApiKey())
+            .accept(MediaType.TEXT_EVENT_STREAM)
+            .exchangeToFlux(response -> {
+                if (response.statusCode().isError()) {
+                    return response.<String>createError().flux();
+                }
+                // Stream is open: resync the cache to pick up changes missed while disconnected
+                fetchGroups().subscribe();
+                return response.bodyToFlux(String.class);
+            })
+            // A half-open connection never errors, so a silent stream is reconnected
+            .timeout(BRIDGE_IDLE_TIMEOUT)
+            // retryWhen only reacts to errors, so a cleanly closed stream must become one
+            .concatWith(Flux.error(new IllegalStateException("Bridge SSE stream closed")));
     }
 
     private void processBridgeEvent(String eventData) {
@@ -159,30 +190,46 @@ public class LightService {
         try {
             JsonNode events = objectMapper.readTree(eventData);
             if (!events.isArray()) return;
-            boolean changed = false;
-            for (JsonNode event : events) {
-                if (!"update".equals(event.path("type").asText())) continue;
-                for (JsonNode resource : event.path("data")) {
-                    if (!"grouped_light".equals(resource.path("type").asText())) continue;
-                    String id = resource.path("id").asText();
-                    ObjectNode cached = cachedGroups.get(id);
-                    if (cached == null) continue;
-                    ObjectNode action = (ObjectNode) cached.get("action");
-                    if (resource.has("on")) {
-                        action.put("on", resource.path("on").path("on").asBoolean());
-                        changed = true;
-                    }
-                    if (resource.has("dimming")) {
-                        action.put("brightness", resource.path("dimming").path("brightness").asDouble(100.0));
-                        changed = true;
-                    }
-                }
-            }
-            if (changed) {
-                groupsSink.tryEmitNext(new HashMap<>(cachedGroups));
+            synchronized (cacheLock) {
+                applyBridgeEvents(events);
             }
         } catch (Exception e) {
             log.error("Failed to parse bridge event: {}", e.getMessage());
+        }
+    }
+
+    private void applyBridgeEvents(JsonNode events) {
+        boolean changed = false;
+        for (JsonNode event : events) {
+            if (!"update".equals(event.path("type").asText())) continue;
+            for (JsonNode resource : event.path("data")) {
+                if (!"grouped_light".equals(resource.path("type").asText())) continue;
+                String id = resource.path("id").asText();
+                ObjectNode cached = cachedGroups.get(id);
+                if (cached == null) continue;
+                ObjectNode action = (ObjectNode) cached.get("action");
+                if (resource.has("on")) {
+                    action.put("on", resource.path("on").path("on").asBoolean());
+                    changed = true;
+                }
+                if (resource.has("dimming")) {
+                    action.put("brightness", resource.path("dimming").path("brightness").asDouble(100.0));
+                    changed = true;
+                }
+            }
+        }
+        if (changed) {
+            emitSnapshot();
+        }
+    }
+
+    // Caller must hold cacheLock. Deep copy, so later in-place updates don't race with serialization.
+    private void emitSnapshot() {
+        Map<String, ObjectNode> snapshot = new HashMap<>();
+        cachedGroups.forEach((id, node) -> snapshot.put(id, node.deepCopy()));
+        Sinks.EmitResult result = groupsSink.tryEmitNext(snapshot);
+        if (result.isFailure()) {
+            log.warn("Failed to emit light state: {}", result);
         }
     }
 
