@@ -46,6 +46,6 @@ services:
           - frontend
 
 networks:
-  # Shared with the central reverse proxy on octane; create once: docker network create proxy
+  # Shared with the central reverse proxy on the production server; create once: docker network create proxy
   proxy:
     external: true
