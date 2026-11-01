@@ -38,7 +38,7 @@ export default function LightsTab({ groups, lightState }: Props) {
       if (!prev) return prev
       return { ...prev, [groupId]: { ...prev[groupId], action: { ...prev[groupId].action, on } } }
     })
-    await fetch('/api/trigger-light', {
+    await fetch('api/trigger-light', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ on, id: groupId }),
@@ -54,7 +54,7 @@ export default function LightsTab({ groups, lightState }: Props) {
     clearTimeout(brightnessTimers.current[groupId])
     brightnessTimers.current[groupId] = setTimeout(async () => {
       pendingRef.current.add(groupId)
-      await fetch('/api/trigger-light', {
+      await fetch('api/trigger-light', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ on: true, id: groupId, brightness }),

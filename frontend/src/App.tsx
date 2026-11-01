@@ -22,7 +22,7 @@ export default function App() {
   const [wifi, setWifi] = useState<WifiData | null>(null)
   const [weather, setWeather] = useState<WeatherData | null>(null)
 
-  useSse('/sse', {
+  useSse('sse', {
     stationboard: data => setStationboard(data as StationboardData),
     groups: data => setLightGroups(data as LightGroups),
     light: data => setLightState(data as LightGroups),

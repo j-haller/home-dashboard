@@ -88,7 +88,7 @@ Builds a single image: the React app is bundled into the Spring Boot jar and ser
 
 ### Reverse proxy
 
-The app is served through the central reverse proxy on the production server (separate `proxy` repository), which routes `dashboard.<production-server>.lan` to the app (the hostname must resolve to the server, e.g. via a wildcard DNS entry). The Docker network must exist before starting:
+The app is served through the central reverse proxy on the production server (separate `proxy` repository), which serves the app under `http://<production-server>/home-dashboard/` and strips the prefix before forwarding. The frontend therefore uses only relative URLs (`sse`, `api/...`) and Vite `base: './'`, so it works under any path prefix. The Docker network must exist before starting:
 
 ```sh
 docker network create proxy   # once per server
