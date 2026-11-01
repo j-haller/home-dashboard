@@ -81,4 +81,12 @@ Starts nginx (port `8080`), Spring Boot backend, and the Vite dev server with ho
 docker compose --profile prod up --build
 ```
 
-Builds the React app and serves it as static files via nginx alongside the Spring Boot backend. Exposed on port `8080`.
+Builds a single image: the React app is bundled into the Spring Boot jar and served by the backend itself. The container publishes no host port; it joins the external Docker network `proxy` (alias `home-dashboard`, port `8080`) and is reached through a central reverse proxy shared by all web apps on the server.
+
+### Reverse proxy
+
+The app is served through the central reverse proxy on octane (separate `proxy` repository), which routes `dashboard.home.lan` to `home-dashboard:8080`. The Docker network must exist before starting:
+
+```sh
+docker network create proxy   # once per server
+```
