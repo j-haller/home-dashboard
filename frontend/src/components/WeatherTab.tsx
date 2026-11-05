@@ -72,8 +72,8 @@ export default function WeatherTab({ data }: { data: WeatherData | null }) {
         })}
       </div>
 
-      <div className="row row-cols-6 g-2 flex-grow-1">
-        {data.daily.slice(1).map(d => {
+      <div className="row row-cols-6 g-2 flex-grow-1 flex-nowrap overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+        {data.daily.map(d => {
           const { Icon: DIcon } = weatherInfo(d.weatherCode)
           const date = new Date(d.date + 'T12:00:00')
           const dayName = date.toLocaleDateString('en-US', { weekday: 'short' })

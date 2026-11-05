@@ -21,14 +21,14 @@ Never install packages on the host for runtime use.
 
 ```sh
 docker compose --profile dev up --build   # dev: nginx :8080, Vite HMR, Spring Boot
-docker compose --profile prod up --build  # prod: static build served via nginx :8080
+docker compose --profile prod up --build  # prod: Spring Boot serves the built frontend, reached via central proxy (network `proxy`)
 ```
 
 ## Architecture
 
 - **Backend**: Spring Boot 3.3.5, Java 21, WebFlux (reactive). Single SSE endpoint `GET /sse` merges named event streams from independent services.
 - **Frontend**: React 18, TypeScript (strict), Bootstrap 5, Vite. `useSse` hook registers named EventSource listeners.
-- **Routing**: nginx proxies `/api/*` and `/sse` to backend, everything else to frontend.
+- **Routing**: dev: nginx proxies `/api/*` and `/sse` to backend, everything else to Vite. Prod: one container, Spring Boot serves the frontend from `classpath:/static` (root `Dockerfile`); the central nginx (separate `proxy` repo) serves it at `/home-dashboard/` (prefix stripped) and forwards to `home-dashboard:8080`. Frontend must use relative URLs only (`sse`, `api/...`, never leading `/`) so it works under the prefix.
 
 ## Code conventions
 
